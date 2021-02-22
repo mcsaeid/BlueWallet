@@ -147,7 +147,9 @@ const SendDetails = () => {
     setIsLoading(false);
 
     // load cached fees
-    AsyncStorage.getItem(NetworkTransactionFee.StorageKey).then(fees => {
+    AsyncStorage.getItem(NetworkTransactionFee.StorageKey).then(res => {
+      const fees = JSON.parse(res);
+      if (!fees?.fastestFee) return;
       setNetworkTransactionFees(JSON.parse(fees));
       forceFee.current = true;
     });
