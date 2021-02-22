@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useContext } from 'react';
+import React, { useState, useRef, useEffect, useContext, useMemo } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -74,7 +74,7 @@ const SendDetails = () => {
   const [units, setUnits] = useState([]);
   const [memo, setMemo] = useState('');
   const [networkTransactionFees, setNetworkTransactionFees] = useState(new NetworkTransactionFee(3, 2, 1));
-  const [fee, setFee] = useState('1');
+  const [customFee, setCustomFee] = useState(null);
   const [feePrecalc, setFeePrecalc] = useState({ current: null, slowFee: null, mediumFee: null, fastestFee: null });
   const [feeUnit, setFeeUnit] = useState();
   const [amountUnit, setAmountUnit] = useState();
@@ -82,6 +82,24 @@ const SendDetails = () => {
   const [payjoinUrl, setPayjoinUrl] = useState(null);
   const [changeAddress, setChangeAddress] = useState();
   const [dumb, setDumb] = useState(false);
+
+  // if cutomFee is not set, we need to choose highest possible fee for wallet balance
+  // if there are no funds for even Slow option, use 1 sat/byte fee
+  const fee = useMemo(() => {
+    if (customFee) return customFee;
+    if (feePrecalc.fastestFee === null) return '1'; // wait for precalculated fees
+    let initialFee;
+    if (feePrecalc.fastestFee !== null) {
+      initialFee = String(networkTransactionFees.fastestFee);
+    } else if (feePrecalc.mediumFee !== null) {
+      initialFee = String(networkTransactionFees.mediumFee);
+    } else if (feePrecalc.slowFee !== null) {
+      initialFee = String(networkTransactionFees.slowFee);
+    } else {
+      initialFee = '1';
+    }
+    return initialFee;
+  }, [customFee, feePrecalc, networkTransactionFees]);
 
   // keyboad effects
   useEffect(() => {
@@ -146,11 +164,13 @@ const SendDetails = () => {
     setIsLoading(false);
 
     // load cached fees
-    AsyncStorage.getItem(NetworkTransactionFee.StorageKey).then(res => {
-      const fees = JSON.parse(res);
-      if (!fees?.fastestFee) return;
-      setNetworkTransactionFees(JSON.parse(fees));
-    });
+    AsyncStorage.getItem(NetworkTransactionFee.StorageKey)
+      .then(async res => {
+        const fees = JSON.parse(res);
+        if (!fees?.fastestFee) return;
+        setNetworkTransactionFees(fees);
+      })
+      .catch(e => console.log('loading cached recommendedFees error', e));
 
     // load fresh fees from servers
     NetworkTransactionFees.recommendedFees()
@@ -272,23 +292,6 @@ const SendDetails = () => {
 
     setFeePrecalc(newFeePrecalc);
   }, [wallet, networkTransactionFees, utxo, addresses, fee, dumb]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // set state.fee when networkTransactionFees changes. Choose highest possible fee for wallet balance
-  // if there are no funds for even Slow option, use 1 sat/byte fee
-  useEffect(() => {
-    if (feePrecalc.fastestFee === null) return; // wait for precalculated fees
-    let initialFee;
-    if (feePrecalc.fastestFee !== null) {
-      initialFee = String(networkTransactionFees.fastestFee);
-    } else if (feePrecalc.mediumFee !== null) {
-      initialFee = String(networkTransactionFees.mediumFee);
-    } else if (feePrecalc.slowFee !== null) {
-      initialFee = String(networkTransactionFees.slowFee);
-    } else {
-      initialFee = '1';
-    }
-    setFee(initialFee);
-  }, [wallet, networkTransactionFees, feePrecalc]);
 
   const getChangeAddressFast = () => {
     if (changeAddress) return changeAddress; // cache
@@ -976,7 +979,7 @@ const SendDetails = () => {
                 onPress={() => {
                   setFeePrecalc(fp => ({ ...fp, current: fee }));
                   setIsFeeSelectionModalVisible(false);
-                  setFee(rate.toString());
+                  setCustomFee(rate.toString());
                 }}
                 style={[styles.feeModalItem, active && styles.feeModalItemActive, active && stylesHook.feeModalItemActive]}
               >
@@ -1015,7 +1018,7 @@ const SendDetails = () => {
 
                   if (fee < 1) fee = '1';
                   fee = Number(fee).toString(); // this will remove leading zeros if any
-                  setFee(fee);
+                  setCustomFee(fee);
                   setIsFeeSelectionModalVisible(false);
                   return;
                 }
