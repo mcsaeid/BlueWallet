@@ -76,7 +76,6 @@ const SendDetails = () => {
   const [networkTransactionFees, setNetworkTransactionFees] = useState(new NetworkTransactionFee(3, 2, 1));
   const [fee, setFee] = useState('1');
   const [feePrecalc, setFeePrecalc] = useState({ current: null, slowFee: null, mediumFee: null, fastestFee: null });
-  const forceFee = useRef(false);
   const [feeUnit, setFeeUnit] = useState();
   const [amountUnit, setAmountUnit] = useState();
   const [utxo, setUtxo] = useState(null);
@@ -151,7 +150,6 @@ const SendDetails = () => {
       const fees = JSON.parse(res);
       if (!fees?.fastestFee) return;
       setNetworkTransactionFees(JSON.parse(fees));
-      forceFee.current = true;
     });
 
     // load fresh fees from servers
@@ -159,7 +157,6 @@ const SendDetails = () => {
       .then(async fees => {
         if (!fees?.fastestFee) return;
         setNetworkTransactionFees(fees);
-        forceFee.current = true;
         await AsyncStorage.setItem(NetworkTransactionFee.StorageKey, JSON.stringify(fees));
       })
       .catch(e => console.log('loading recommendedFees error', e));
@@ -200,14 +197,22 @@ const SendDetails = () => {
     const requestedSatPerByte = Number(fee);
     const lutxo = utxo || wallet.getUtxo();
 
-    const options = forceFee.current
-      ? [
-          { key: 'current', fee: requestedSatPerByte },
-          { key: 'slowFee', fee: fees.slowFee },
-          { key: 'mediumFee', fee: fees.mediumFee },
-          { key: 'fastestFee', fee: fees.fastestFee },
-        ]
-      : [{ key: 'current', fee: requestedSatPerByte }];
+    // TODO we can limit options to current if only state.fee updates
+    // const options = condition
+    //   ? [
+    //       { key: 'current', fee: requestedSatPerByte },
+    //       { key: 'slowFee', fee: fees.slowFee },
+    //       { key: 'mediumFee', fee: fees.mediumFee },
+    //       { key: 'fastestFee', fee: fees.fastestFee },
+    //     ]
+    //   : [{ key: 'current', fee: requestedSatPerByte }];
+
+    const options = [
+      { key: 'current', fee: requestedSatPerByte },
+      { key: 'slowFee', fee: fees.slowFee },
+      { key: 'mediumFee', fee: fees.mediumFee },
+      { key: 'fastestFee', fee: fees.fastestFee },
+    ];
 
     const newFeePrecalc = { ...feePrecalc };
 
@@ -265,25 +270,25 @@ const SendDetails = () => {
       }
     }
 
-    // set state.fee during component mount. Choose highest possible fee for wallet balance
-    // if there are no funds for even Slow option, use 1 sat/byte fee
-    if (forceFee.current) {
-      let initialFee;
-      if (newFeePrecalc.fastestFee !== null) {
-        initialFee = String(fees.fastestFee);
-      } else if (newFeePrecalc.mediumFee !== null) {
-        initialFee = String(fees.mediumFee);
-      } else if (newFeePrecalc.slowFee !== null) {
-        initialFee = String(fees.slowFee);
-      } else {
-        initialFee = '1';
-      }
-      setFee(initialFee);
-      forceFee.current = false;
-    }
-
     setFeePrecalc(newFeePrecalc);
   }, [wallet, networkTransactionFees, utxo, addresses, fee, dumb]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // set state.fee when networkTransactionFees changes. Choose highest possible fee for wallet balance
+  // if there are no funds for even Slow option, use 1 sat/byte fee
+  useEffect(() => {
+    if (feePrecalc.fastestFee === null) return; // wait for precalculated fees
+    let initialFee;
+    if (feePrecalc.fastestFee !== null) {
+      initialFee = String(networkTransactionFees.fastestFee);
+    } else if (feePrecalc.mediumFee !== null) {
+      initialFee = String(networkTransactionFees.mediumFee);
+    } else if (feePrecalc.slowFee !== null) {
+      initialFee = String(networkTransactionFees.slowFee);
+    } else {
+      initialFee = '1';
+    }
+    setFee(initialFee);
+  }, [wallet, networkTransactionFees, feePrecalc]);
 
   const getChangeAddressFast = () => {
     if (changeAddress) return changeAddress; // cache
