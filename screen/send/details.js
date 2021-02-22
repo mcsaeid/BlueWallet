@@ -49,13 +49,14 @@ import { BlueStorageContext } from '../../blue_modules/storage-context';
 const currency = require('../../blue_modules/currency');
 const prompt = require('../../blue_modules/prompt');
 const fs = require('../../blue_modules/fs');
+const scanqr = require('../../helpers/scan-qr');
 
 const btcAddressRx = /^[a-zA-Z0-9]{26,35}$/;
 
 const SendDetails = () => {
   const { wallets, setSelectedWallet, sleep, txMetadata, saveToDisk } = useContext(BlueStorageContext);
   const navigation = useNavigation();
-  const routeParams = useRoute().params; // FIXME refactor to use walletID
+  const { name, params: routeParams } = useRoute(); // FIXME refactor to use walletID
   const { width } = useWindowDimensions();
   const scrollView = useRef();
   const { colors } = useTheme();
@@ -784,6 +785,46 @@ const SendDetails = () => {
     });
   };
 
+  const handlePsbtSign = async () => {
+    setIsLoading(true);
+    setOptionsVisible(false);
+    await new Promise(resolve => setTimeout(resolve, 100)); // sleep for animations
+    const scannedData = await scanqr(navigation.navigate, name);
+    if (!scannedData) return setIsLoading(false);
+
+    let tx;
+    let psbt;
+    try {
+      psbt = bitcoin.Psbt.fromBase64(scannedData);
+      tx = wallet.cosignPsbt(psbt).tx;
+    } catch (e) {
+      Alert.alert(e.message);
+      return;
+    } finally {
+      setIsLoading(false);
+    }
+
+    if (!tx) return setIsLoading(false);
+
+    // we need to remove change address from recipients, so that Confirm screen show more accurate info
+    const changeAddresses = [];
+    for (let c = 0; c < wallet.next_free_change_address_index + wallet.gap_limit; c++) {
+      changeAddresses.push(wallet._getInternalAddressByIndex(c));
+    }
+    const recipients = psbt.txOutputs.filter(({ address }) => !changeAddresses.includes(address));
+
+    navigation.navigate('CreateTransaction', {
+      fee: new BigNumber(psbt.getFee()).dividedBy(100000000).toNumber(),
+      feeSatoshi: psbt.getFee(),
+      wallet,
+      tx: tx.toHex(),
+      recipients,
+      satoshiPerByte: psbt.getFeeRate(),
+      showAnimatedQr: true,
+      psbt,
+    });
+  };
+
   const hideOptions = () => {
     Keyboard.dismiss();
     setOptionsVisible(false);
@@ -1052,6 +1093,15 @@ const SendDetails = () => {
               </>
             )}
             <BlueListItem testID="CoinControl" title={loc.cc.header} hideChevron component={TouchableOpacity} onPress={handleCoinControl} />
+            {wallet.allowCosignPsbt() && (
+              <BlueListItem
+                testID="PsbtSign"
+                title={loc.send.psbt_sign}
+                hideChevron
+                component={TouchableOpacity}
+                onPress={handlePsbtSign}
+              />
+            )}
           </View>
         </KeyboardAvoidingView>
       </BottomModal>
@@ -1430,7 +1480,7 @@ SendDetails.navigationOptions = navigationStyleTx({}, (options, { theme, navigat
   }
   return {
     ...options,
-    title: loc.send.header,
     headerRight,
+    title: loc.send.header,
   };
 });
